@@ -1,10 +1,13 @@
 import { GetStaticPaths, GetStaticProps } from 'next';
 import Prismic from '@prismicio/client';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { RichText, RichTextBlock } from 'prismic-reactjs';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { FiCalendar, FiClock, FiUser } from 'react-icons/fi';
+import Link from 'next/link';
+import format from 'date-fns/format';
+import { ptBR } from 'date-fns/locale';
 import { getPrismicClient } from '../../services/prismic';
 import { formatterDatePublication } from '../../services/formatterDate';
 
@@ -12,8 +15,9 @@ import commonStyles from '../../styles/common.module.scss';
 import styles from './post.module.scss';
 
 interface IPost {
-  uid: string;
+  uid?: string;
   first_publication_date: string | null;
+  last_publication_date: string | null;
   data: {
     banner: {
       url: string;
@@ -28,11 +32,26 @@ interface IPost {
   };
 }
 
-interface PostProps {
-  post: IPost;
+interface NavPost {
+  uid?: string;
+  data: {
+    title: string;
+  };
 }
 
-export default function Post({ post }: PostProps): ReactNode {
+interface PostProps {
+  post: IPost;
+  prevPost?: NavPost;
+  nextPost?: NavPost;
+  preview: boolean;
+}
+
+export default function Post({
+  post,
+  prevPost,
+  nextPost,
+  preview,
+}: PostProps): ReactNode {
   const router = useRouter();
 
   if (router.isFallback) {
@@ -42,6 +61,20 @@ export default function Post({ post }: PostProps): ReactNode {
       </div>
     );
   }
+
+  const createScripComments = (): void => {
+    const script = document.createElement('script');
+    const anchor = document.getElementById('comments-post');
+    script.setAttribute('src', 'https://utteranc.es/client.js');
+    script.setAttribute('crossorigin', 'anonymous');
+    script.setAttribute('async', '');
+    script.setAttribute('label', 'blogIgnews');
+    script.setAttribute('repo', 'JMoitta/blog-ignews');
+    script.setAttribute('issue-term', 'pathname');
+    script.setAttribute('theme', 'github-dark');
+    anchor.innerHTML = '';
+    anchor.appendChild(script);
+  };
 
   const postFormat = {
     ...post,
@@ -59,9 +92,18 @@ export default function Post({ post }: PostProps): ReactNode {
       heading,
       body,
     })),
+    formatedDateEdited: format(
+      new Date(post.last_publication_date),
+      " dd MMM yyyy', às ' HH:mm",
+      {
+        locale: ptBR,
+      }
+    ),
   };
 
-  // console.log(RichText.asHtml(postFormat.formatContent[0].body));
+  useEffect((): void => {
+    createScripComments();
+  }, []);
 
   return (
     <>
@@ -93,6 +135,12 @@ export default function Post({ post }: PostProps): ReactNode {
               {`${postFormat.tempoDeLeitura} min`}
             </div>
           </div>
+          <div className={styles.edited}>
+            <i>
+              * editado em
+              {postFormat.formatedDateEdited}
+            </i>
+          </div>
           <div className={styles.postContent}>
             {postFormat.formatContent.map(document => (
               <div key={document.heading}>
@@ -101,6 +149,34 @@ export default function Post({ post }: PostProps): ReactNode {
               </div>
             ))}
           </div>
+          <nav className={styles.navPostsContent}>
+            {prevPost ? (
+              <div>
+                <p className={styles.titleNavLink}>{prevPost.data.title}</p>
+                <Link href={`/post/${prevPost.uid}`}>
+                  <a className={commonStyles.link}>Post anterior</a>
+                </Link>
+              </div>
+            ) : (
+              <div />
+            )}
+            {nextPost && (
+              <div className={styles.navNextPost}>
+                <p className={styles.titleNavLink}>{nextPost.data.title}</p>
+                <Link href={`/post/${nextPost.uid}`}>
+                  <a className={commonStyles.link}>Próximo post</a>
+                </Link>
+              </div>
+            )}
+          </nav>
+          <div id="comments-post" />
+          {preview && (
+            <aside className={styles.actionPreview}>
+              <Link href="/api/exit-preview">
+                <a>Sair do modo Preview</a>
+              </Link>
+            </aside>
+          )}
         </article>
       </main>
     </>
@@ -121,35 +197,66 @@ export const getStaticPaths: GetStaticPaths = async () => {
   }));
   return {
     paths: posts,
-    fallback: 'blocking',
+    fallback: 'blocking', // 'blocking'
   };
 };
 
-export const getStaticProps: GetStaticProps = async ({ params }) => {
+export const getStaticProps: GetStaticProps<PostProps> = async ({
+  params,
+  preview = false,
+  previewData,
+}) => {
   const { slug } = params;
 
   const prismic = getPrismicClient();
 
-  const postPrismic = await prismic.getByUID('postblog', String(slug), {});
+  const response = await prismic.getByUID('postblog', String(slug), {
+    ref: previewData?.ref ?? null,
+  });
 
-  const post: IPost = {
-    uid: postPrismic.uid,
-    first_publication_date: postPrismic.first_publication_date,
-    data: {
-      title: postPrismic.data.title,
-      subtitle: postPrismic.data.subtitle,
-      banner: {
-        url: postPrismic.data.banner.url,
-      },
-      author: postPrismic.data.author,
-      content: postPrismic.data.content,
-    },
-  };
+  const post: IPost = response;
 
+  const responsePrev = await prismic.query(
+    [
+      Prismic.predicates.at('document.type', 'postblog'),
+      Prismic.Predicates.dateBefore(
+        'document.first_publication_date',
+        new Date(post.first_publication_date)
+      ),
+    ],
+    {
+      fetch: ['postblog.title'],
+      after: post.uid,
+      pageSize: 1,
+      orderings: '[my.postblog.title desc]',
+    }
+  );
+
+  const responseNext = await prismic.query(
+    [
+      Prismic.predicates.at('document.type', 'postblog'),
+      Prismic.Predicates.dateAfter(
+        'document.first_publication_date',
+        new Date(post.first_publication_date)
+      ),
+    ],
+    {
+      fetch: ['postblog.title'],
+      after: post.uid,
+      pageSize: 1,
+      orderings: '[my.postblog.title]',
+    }
+  );
+
+  const prevPost: NavPost = responsePrev.results[0] ?? null;
+  const nextPost: NavPost = responseNext.results[0] ?? null;
   return {
     props: {
       post,
+      prevPost,
+      nextPost,
+      preview,
     },
-    revalidate: 60 * 30, // minutos
+    revalidate: 60 * 30, // 30 minutos
   };
 };

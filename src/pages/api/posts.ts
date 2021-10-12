@@ -13,8 +13,9 @@ const posts = async (
     [Prismic.predicates.at('document.type', 'postblog')],
     {
       fetch: ['postblog.title', 'postblog.subtitle', 'postblog.author'],
-      pageSize: 1,
+      pageSize: 2,
       page,
+      orderings: '[document.first_publication_date]',
     }
   );
   return res.status(200).json({ ...postsResponse });

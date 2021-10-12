@@ -21,7 +21,8 @@ interface Post {
 }
 
 interface PostPagination {
-  next_page: string;
+  page: number;
+  total_pages: number;
   results: Post[];
 }
 
@@ -31,27 +32,33 @@ interface HomeProps {
 
 export default function Home({ postsPagination }: HomeProps): JSX.Element {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [page, setPage] = useState(postsPagination.page);
 
-  useEffect(() => {
-    const postsFormatted = postsPagination.results.map(post => ({
+  const formattedPost = (postsPrismic: Post[]): Post[] => {
+    const postsFormatted = postsPrismic.map(post => ({
       ...post,
       first_publication_date: format(
         new Date(post.first_publication_date),
-        'dd MMM yyyy',
+        "dd MMM yyyy', às' HH:mm:ss",
         {
           locale: ptBR,
         }
       ),
     }));
+    return postsFormatted;
+  };
+  useEffect(() => {
+    const postsFormatted = formattedPost(postsPagination.results);
     setPosts(postsFormatted);
   }, [postsPagination.results]);
 
   async function loadMorePosts(): Promise<void> {
-    const nextPage = posts.length + 1;
+    const nextPage = page + 1;
     const response = await fetch(`/api/posts?page=${nextPage}`);
     const data = await response.json();
-    console.log(data.results);
-    setPosts([...posts, ...data.results]);
+    const resultsFormatted = formattedPost(data.results);
+    setPosts([...posts, ...resultsFormatted]);
+    setPage(nextPage);
   }
 
   return (
@@ -77,7 +84,7 @@ export default function Home({ postsPagination }: HomeProps): JSX.Element {
             </Link>
           ))}
           <footer className={styles.footer}>
-            {postsPagination.next_page && (
+            {page < postsPagination.total_pages && (
               <button type="button" onClick={loadMorePosts}>
                 Carregar mais posts
               </button>
@@ -96,10 +103,10 @@ export const getStaticProps: GetStaticProps<HomeProps> = async () => {
     [Prismic.predicates.at('document.type', 'postblog')],
     {
       fetch: ['postblog.title', 'postblog.subtitle', 'postblog.author'],
-      pageSize: 1,
+      pageSize: 2,
+      orderings: '[document.first_publication_date]',
     }
   );
-
   const posts = postsResponse.results.map<Post>(post => {
     return {
       uid: post.uid,
@@ -112,14 +119,14 @@ export const getStaticProps: GetStaticProps<HomeProps> = async () => {
     };
   });
 
-  // console.log('posts', posts);
-
   return {
     props: {
       postsPagination: {
+        ...postsResponse,
         results: posts,
         next_page: postsResponse.next_page ? 'link' : null,
       },
     },
+    revalidate: 60 * 60 * 3, // 3 horas
   };
 };
